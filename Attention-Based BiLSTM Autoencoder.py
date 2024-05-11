@@ -1,54 +1,45 @@
 import tensorflow as tf
-from tensorflow.keras.layers import Embedding, Bidirectional, LSTM, Dense, Concatenate
+from tensorflow.keras.layers import Embedding, Bidirectional, LSTM, Dense, Concatenate, Input, TimeDistributed, Activation, Dot
 from tensorflow.keras.models import Model
-from tensorflow.keras.losses import MeanSquaredError
-from tensorflow.keras.regularizers import l1
+from tensorflow.keras import backend as K
 
-# Hyperparameters (these would be set based on your specific use case and optimized via cross-validation)
-embedding_dim = 64  # Dimensionality of the embedding space
-lstm_units = 64     # Number of units in the LSTM layers
-lambda_sparsity = 0.01  # Hyperparameter for L1 sparsity
-beta_class_weight = 0.01  # Hyperparameter for class weight
-sequence_length = 100  # Length of the input sequences
-num_classes = 10       # Number of classes for class weight
-vocab_size = 1000      # Size of the vocabulary
+# Hyperparameters
+embedding_dim = 64
+lstm_units = 64
+vocab_size = 1000
+sequence_length = 100
 
-# Define the encoder part of the BiLSTM
-inputs = tf.keras.Input(shape=(sequence_length,), dtype='int32')
-embedded = Embedding(vocab_size, embedding_dim, input_length=sequence_length)(inputs)
-bilstm = Bidirectional(LSTM(lstm_units, return_state=True))(embedded)
-encoder_states = Concatenate()(bilstm[0])  # Concatenate forward and backward hidden states
+# Encoder
+encoder_inputs = Input(shape=(sequence_length,))
+embedding_layer = Embedding(vocab_size, embedding_dim, input_length=sequence_length)
+encoder_embedding = embedding_layer(encoder_inputs)
+encoder = Bidirectional(LSTM(lstm_units, return_sequences=True))
+encoder_outputs = encoder(encoder_embedding)
 
-# Define the attention mechanism
-attention_weights = Dense(1, activation='softmax', name='attention_weights')(encoder_states)
-context_vector = tf.keras.layers.Multiply()([attention_weights, encoder_states])
+# Attention
+attention_result = Dense(1, activation='tanh')(encoder_outputs)
+attention_weights = Dense(1, activation='softmax')(attention_result)
+context_vector = Dot(axes=[1, 1])([attention_weights, encoder_outputs])
+decoder_combined_context = Concatenate(axis=-1)([context_vector, encoder_outputs])
 
-# Define the decoder part of the BiLSTM autoencoder
-decoder_inputs = context_vector
-decoder_lstm = LSTM(lstm_units, return_sequences=True, return_state=True)
-decoder_outputs = decoder_lstm(decoder_inputs, initial_state=encoder_states)
+# Decoder for an autoencoder (if you were translating or generating, this setup would differ)
+decoder_lstm = LSTM(lstm_units, return_sequences=True)
+decoder_outputs = decoder_lstm(decoder_combined_context)
+outputs = TimeDistributed(Dense(vocab_size, activation='softmax'))(decoder_outputs)
 
-# Final output layer
-decoder_dense = Dense(sequence_length, activation='softmax')
-outputs = decoder_dense(decoder_outputs)
+# Defining the model
+model = Model(encoder_inputs, outputs)
 
-# Define the model
-autoencoder = Model(inputs, outputs)
-
-# Define the loss function with L1 sparsity and class weight
+# Custom loss with L1 regularization & class weights - placeholder
 def custom_loss(y_true, y_pred):
-    mse_loss = MeanSquaredError()(y_true, y_pred)
-    sparsity_loss = lambda_sparsity * l1(encoder_states)
-    class_weight_loss = beta_class_weight * compute_class_weight_loss(y_true, y_pred, num_classes)
-    return mse_loss + sparsity_loss + class_weight_loss
+    mse_loss = tf.keras.losses.MSE(y_true, y_pred)
+    sparsity_loss = 0.01 * tf.reduce_sum(tf.abs(encoder_outputs))
+    return mse_loss + sparsity_loss  # Class weights application would depend on external computation
 
-# You would need to define `compute_class_weight_loss` based on your specific needs
+model.compile(optimizer='adam', loss=custom_loss)
 
-# Compile the model
-autoencoder.compile(optimizer='adam', loss=custom_loss)
+# Model summary
+model.summary()
 
-# Summary of the model
-autoencoder.summary()
-
-# Training the model (assuming `X_train` is your input data)
-autoencoder.fit(X_train, X_train, epochs=10, batch_size=32)
+# Example training call (placeholder data)
+# model.fit(X_train, y_train, epochs=10, batch_size=32)
